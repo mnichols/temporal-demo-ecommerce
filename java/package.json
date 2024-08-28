@@ -1,0 +1,23 @@
+{
+  "name": "temporal-demo-ecommerce-java",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "postinstall": "graphql-codegen"
+  },
+  "author": "",
+  "license": "MIT",
+  "description": "",
+  "dependencies": {
+    "@graphql-codegen/cli": "^5.0.2",
+    "@graphql-codegen/client-preset": "^4.2.4",
+    "@graphql-codegen/typed-document-node": "^5.0.6",
+    "@graphql-codegen/typescript": "^4.0.6",
+    "@graphql-codegen/typescript-operations": "^4.2.0"
+  },
+  "devDependencies": {
+    "@graphql-codegen/java": "^4.0.1",
+    "@graphql-codegen/java-resolvers": "^3.0.0",
+    "graphql": "^16.9.0"
+  }
+}

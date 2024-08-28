@@ -1,0 +1,10 @@
+type Cart {
+    userId: String!
+    id: String!
+}
+input ValidateRequest {
+    value: String!
+}
+type ValidateResponse {
+    value: String!
+}

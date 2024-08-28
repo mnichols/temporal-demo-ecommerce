@@ -1,0 +1,14 @@
+//apply plugin: 'com.moowork.node'
+dependencies {
+
+
+}
+
+
+bootJar {
+    enabled = false
+}
+
+jar {
+    enabled = true
+}

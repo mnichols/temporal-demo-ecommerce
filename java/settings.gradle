@@ -1,0 +1,6 @@
+rootProject.name = 'java'
+include 'domain'
+include 'workers'
+include 'api'
+include 'messages'
+
