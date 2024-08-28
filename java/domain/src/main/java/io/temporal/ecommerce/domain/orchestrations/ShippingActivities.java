@@ -7,6 +7,6 @@ import io.temporal.ecommerce.messages.queries.ProductShipabilityResponse;
 
 @ActivityInterface
 public interface ShippingActivities {
-    @ActivityMethod
-    public ProductShipabilityResponse getProductShipability(ProductShipabilityRequest req);
+  @ActivityMethod
+  public ProductShipabilityResponse getProductShipability(ProductShipabilityRequest req);
 }

@@ -6,6 +6,6 @@ import io.temporal.ecommerce.messages.commands.WriteDenormalizedCartItemRequest;
 
 @ActivityInterface
 public interface ViewActivities {
-    @ActivityMethod
-    void writeDenormalizedCartItem(WriteDenormalizedCartItemRequest req);
+  @ActivityMethod
+  void writeDenormalizedCartItem(WriteDenormalizedCartItemRequest req);
 }

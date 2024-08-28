@@ -8,8 +8,8 @@ import org.springframework.stereotype.Component;
 @Component("shipping-handlers")
 public class Handlers implements ShippingActivities {
 
-    @Override
-    public ProductShipabilityResponse getProductShipability(ProductShipabilityRequest req) {
-        return new ProductShipabilityResponse(req.productId(), true);
-    }
+  @Override
+  public ProductShipabilityResponse getProductShipability(ProductShipabilityRequest req) {
+    return new ProductShipabilityResponse(req.productId(), true);
+  }
 }

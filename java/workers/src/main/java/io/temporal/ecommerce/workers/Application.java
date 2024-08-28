@@ -1,4 +1,4 @@
-package io.temporal.ecommerce.workers.temporal;
+package io.temporal.ecommerce.workers;
 
 import io.temporal.ecommerce.domain.DomainConfig;
 import org.springframework.boot.SpringApplication;
@@ -9,8 +9,7 @@ import org.springframework.context.annotation.Import;
 @Import({DomainConfig.class})
 public class Application {
 
-    public static void main(String[] args) {
-        SpringApplication.run(Application.class, args);
-    }
+  public static void main(String[] args) {
+    SpringApplication.run(Application.class, args);
+  }
 }
-

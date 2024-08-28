@@ -7,6 +7,6 @@ import io.temporal.ecommerce.messages.queries.ProductInventoryStatusResponse;
 
 @ActivityInterface
 public interface InventoryActivities {
-    @ActivityMethod
-    ProductInventoryStatusResponse getInventoryStatus(ProductInventoryStatusRequest req);
+  @ActivityMethod
+  ProductInventoryStatusResponse getInventoryStatus(ProductInventoryStatusRequest req);
 }
