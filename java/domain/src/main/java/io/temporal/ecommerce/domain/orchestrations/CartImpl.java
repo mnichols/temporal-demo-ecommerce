@@ -46,11 +46,9 @@ public class CartImpl implements Cart {
     while (!this.state.isSealed()) {
       Workflow.await(() -> !this.setItemsRequests.isEmpty());
       var items = this.processItemChanges(state, this.setItemsRequests);
-      logger.info("processed {} items", items);
       // note we are not trying to cover the "removed from cart" path where inventory or shipping
       // status changed
       var valid = validateCartItems(items);
-      logger.info("Validated cart items: {}", valid);
       this.state =
           new CartResponse(this.state.id(), this.state.userId(), this.state.isSealed(), valid);
       // source of truth is our Workflow state (not the view models)
@@ -119,7 +117,7 @@ public class CartImpl implements Cart {
     var valid = new LinkedHashMap<String, CartItem>();
     for (Map.Entry<String, CartItem> e : items.entrySet()) {
       var check =
-          validateProductQuantity(new ProductQuantity(e.getValue().productId(), e.getValue().quantity()));
+          validateProduct(new ProductQuantity(e.getValue().productId(), e.getValue().quantity()));
       if (check != null) {
         valid.put(
             e.getKey(),
@@ -135,7 +133,7 @@ public class CartImpl implements Cart {
   // 1. if the quantity available is less than requested, allow up to that maximum available amount
   // 2. if the item is not shippable, return `null` and do not accept it as an cart item. UI should
   // show this as unavailable elsewhere
-  private ProductQuantity validateProductQuantity(ProductQuantity productQuantity) {
+  private ProductQuantity validateProduct(ProductQuantity productQuantity) {
     // we are validating here _in the workflow_ but a debate should be had on
     // whether the inventory subdomain should do an assertion instead in the handler.
     var inv =
