@@ -8,7 +8,7 @@ import io.temporal.client.WorkflowOptions;
 import java.net.URI;
 
 import io.temporal.ecommerce.domain.orchestrations.Cart;
-import io.temporal.ecommerce.messages.api.InitializeCartRequest;
+import io.temporal.ecommerce.messages.workflows.InitializeCartRequest;
 import io.temporal.ecommerce.messages.queries.CartResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,16 +27,15 @@ public class CartsController {
     Logger logger = LoggerFactory.getLogger(CartsController.class);
     @Autowired WorkflowClient temporalClient;
 
-    @Value("${spring.curriculum.task-queue}")
+    @Value("${spring.application.task-queue}")
     String taskQueue;
 
     @GetMapping("/{id}")
-    public ResponseEntity<CartResponse> onboardingGet(@PathVariable("id") String id) {
+    public ResponseEntity<CartResponse> cartGet(@PathVariable("id") String id) {
         try {
-            var workflowStub = temporalClient.newWorkflowStub(MyWorkflow.class, id);
-            // implement this
-            //            var state = workflowStub.getState();
-            return new ResponseEntity<>(new MyResourceGet("do", "something"), HttpStatus.OK);
+            var workflowStub = temporalClient.newWorkflowStub(Cart.class, id);
+            var state = workflowStub.getState();
+            return new ResponseEntity<>(state, HttpStatus.OK);
         } catch (WorkflowNotFoundException e) {
             return new ResponseEntity<>(HttpStatus.NOT_FOUND);
         }
@@ -46,7 +45,7 @@ public class CartsController {
             value = "/{id}",
             consumes = {MediaType.APPLICATION_JSON_VALUE},
             produces = {MediaType.APPLICATION_JSON_VALUE})
-    ResponseEntity<String> onboardingPut(@PathVariable String id, @RequestBody InitializeCartRequest params) {
+    ResponseEntity<String> cartPut(@PathVariable String id, @RequestBody InitializeCartRequest params) {
 
         return startWorkflow(id, params);
     }

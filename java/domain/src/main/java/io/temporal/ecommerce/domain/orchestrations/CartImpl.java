@@ -1,7 +1,8 @@
 package io.temporal.ecommerce.domain.orchestrations;
 
 import io.temporal.activity.ActivityOptions;
-import io.temporal.ecommerce.messages.api.InitializeCartRequest;
+import io.temporal.ecommerce.messages.commands.WriteDenormalizedCartItemRequest;
+import io.temporal.ecommerce.messages.workflows.InitializeCartRequest;
 import io.temporal.ecommerce.messages.commands.AppendCartItemsRequest;
 import io.temporal.ecommerce.messages.queries.CartResponse;
 import io.temporal.ecommerce.messages.queries.ProductInventoryStatusRequest;
@@ -43,18 +44,23 @@ public class CartImpl implements Cart{
         while(!this.state.isSealed()){
             Workflow.await(()-> !this.appendItemRequests.isEmpty());
             // process enqueued messages
-            var items = merge(this.state.items(), processAppends(this.appendItemRequests));
+            var items = merge(params, this.state.items(), processAppends(this.appendItemRequests));
             // source of truth is our Workflow state (not the view models)
-            this.state = new CartResponse(Workflow.getInfo().getWorkflowId(), this.state.userId(), this.state.isSealed(), items);
-            syncCartView();
+            this.state = new CartResponse(
+                    this.state.id(),
+                    this.state.userId(),
+                    this.state.isSealed(),
+                    items);
+            syncCartView(this.state);
         }
     }
 
-    private void syncCartView() {
+    private void syncCartView(CartResponse state) {
         var ps = new ArrayList<Promise<Void>>();
         var errors = new ArrayList<RuntimeException>();
-        for (Map.Entry<String, CartItem> entry : this.state.items().entrySet()) {
-            ps.add(Async.procedure(viewHandlers::writeDenormalizedCartItem, entry.getValue()).handle((v,e) -> {
+        for (Map.Entry<String, CartItem> entry : state.items().entrySet()) {
+            var req = new WriteDenormalizedCartItemRequest(state.userId(), entry.getValue());
+            ps.add(Async.procedure(viewHandlers::writeDenormalizedCartItem, req).handle((v,e) -> {
                 if(e != null) { errors.add(e);}
                 return null;
             }));
@@ -72,6 +78,12 @@ public class CartImpl implements Cart{
     public void appendItems(AppendCartItemsRequest params) {
         this.appendItemRequests.add(params);
     }
+
+    @Override
+    public CartResponse getState() {
+        return this.state;
+    }
+
     // validateProductQuantity
     // Not sure what the rules are so these are the ones I made up:
     // 1. if the quantity available is less than requested, allow up to that maximum available amount
@@ -94,16 +106,8 @@ public class CartImpl implements Cart{
         }
         return productQuantity;
     }
-    private Map<String, CartItem> merge(Map<String, CartItem> ...items) {
-        var result = new LinkedHashMap<String, CartItem>();
-        for(var m : items) {
-            for(Map.Entry<String, CartItem> e : m.entrySet()) {
-                result.merge(e.getKey(), e.getValue(), (a, b) -> new CartItem(a.cartId(), a.productId(), a.quantity() + b.quantity()));
-            }
-        }
-        return result;
-    }
-    private Map<String, CartItem> merge(Map<String, CartItem> items, Map<String, ProductQuantity> quantities) {
+
+    private Map<String, CartItem> merge(InitializeCartRequest params, Map<String, CartItem> items, Map<String, ProductQuantity> quantities) {
         var result = new LinkedHashMap<String, CartItem>();
 
         for(Map.Entry<String,ProductQuantity> e : quantities.entrySet()) {
@@ -113,7 +117,7 @@ public class CartImpl implements Cart{
             if(current!=null) {
                 qty = current.quantity()  + qty;
             }
-            result.put(e.getKey(), new CartItem(Workflow.getInfo().getWorkflowId(), e.getKey(), qty));
+            result.put(e.getKey(), new CartItem(params.id(),  e.getKey(), qty));
         }
 
         return result;
