@@ -1,6 +1,6 @@
 package io.temporal.ecommerce.domain.orchestrations;
 
-import io.temporal.ecommerce.messages.commands.SetCartItemsRequest;
+import io.temporal.ecommerce.messages.commands.ApplyCartItemsChanges;
 import io.temporal.ecommerce.messages.queries.CartResponse;
 import io.temporal.ecommerce.messages.workflows.InitializeCartRequest;
 import io.temporal.workflow.QueryMethod;
@@ -14,7 +14,7 @@ public interface Cart {
   void execute(InitializeCartRequest params);
 
   @SignalMethod
-  void setItems(SetCartItemsRequest params);
+  void applyItemsChanges(ApplyCartItemsChanges params);
 
   @QueryMethod
   CartResponse getState();

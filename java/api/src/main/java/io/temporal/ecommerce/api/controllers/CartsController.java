@@ -51,6 +51,8 @@ public class CartsController {
   }
 
   private ResponseEntity<String> startWorkflow(String id, InitializeCartRequest params) {
+    // for now we ignore the passed in cartItems, but later we use these to initialize a Cart with items already
+    // included.
     final WorkflowOptions options =
         WorkflowOptions.newBuilder()
             .setTaskQueue(taskQueue)
