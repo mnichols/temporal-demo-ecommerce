@@ -1,4 +1,28 @@
-# create-temporal-app
+# temporal-demo-ecommerce
+
+## Applications
+
+* `api` is [here](/java/api/src/main/java/io/temporal/ecommerce/api/Application.java).
+* `workers` is [here](/java/workers/src/main/java/io/temporal/ecommerce/workers/Application.java)
+
+## Example
+
+```sh
+export CART_ID=cart1
+# init the cart
+temporal workflow start \
+  --type Cart \
+  --task-queue app \
+  --workflow-id $CART_ID \
+  --input '{"id":"$CART_ID", "userId": "user123"}' 
+  
+# apply item changes
+temporal workflow signal \
+  --name applyItemsChanges \
+  --workflow-id $CART_ID \
+  --input '{"cartId": "$CART_ID", "productQuantities": [{"productId": "p1", "quantity":2}]}'
+```
+
 
 ## Setup
 

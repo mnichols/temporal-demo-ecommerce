@@ -2,13 +2,16 @@ package io.temporal.ecommerce.domain.orchestrations;
 
 import io.temporal.activity.ActivityOptions;
 import io.temporal.ecommerce.messages.commands.ApplyCartItemsChanges;
+import io.temporal.ecommerce.messages.commands.PutCheckoutRequest;
 import io.temporal.ecommerce.messages.commands.WriteDenormalizedCartItemRequest;
 import io.temporal.ecommerce.messages.queries.CartResponse;
 import io.temporal.ecommerce.messages.queries.ProductInventoryStatusRequest;
 import io.temporal.ecommerce.messages.queries.ProductShipabilityRequest;
 import io.temporal.ecommerce.messages.values.CartItem;
+import io.temporal.ecommerce.messages.values.CheckoutStatus;
 import io.temporal.ecommerce.messages.values.ProductQuantity;
 import io.temporal.ecommerce.messages.workflows.InitializeCartRequest;
+import io.temporal.failure.ApplicationFailure;
 import io.temporal.workflow.Async;
 import io.temporal.workflow.Promise;
 import io.temporal.workflow.Workflow;
@@ -41,17 +44,36 @@ public class CartImpl implements Cart {
 
   @Override
   public void execute(InitializeCartRequest params) {
-    // TODO support input cart items directly and sync the cart view before awaiting change requests
-    // For now, I'm ignoring the `params.items` that should be the map here.
-    // Passing in items like this is handy for ContinueAsNew, as well as making your Workflow much easier to test and
-    // supports more scenarios in the long run
-    this.state = new CartResponse(params.id(), params.userId(), false, new LinkedHashMap<>());
 
-    while (!this.state.isSealed()) {
+    var locked = shouldLock(params.checkout());
+    Map<String, CartItem> seed = new LinkedHashMap<>();
+    if (params.items() != null && params.items().length > 0) {
+      if (locked) {
+        // since we are effectively forcing items in and telling our cart that the checkout has
+        // started,
+        // let's just add them directly to avoid races that ask for items while we are doing our
+        // validation.
+        // we could argue for a revalidation and just add to itemsChangesRequests collection but
+        // we'll
+        // pass for now.
+        seed = fromProductQuantities(params.id(), params.items());
+      } else {
+        this.itemsChangesRequests.add(
+            new ApplyCartItemsChanges(params.id(), Arrays.stream(params.items()).toList()));
+      }
+    }
+    // Passing in items like this is handy for ContinueAsNew, as well as making your Workflow much
+    // easier to test and supports more scenarios in the long run
+    this.state = new CartResponse(params.id(), params.userId(), locked, seed, params.checkout());
+
+    while (!this.state.isLocked()) {
       // 1. this is a typical queueing pattern Durable Execution entities can enjoy.
-      // note that Signals are updating the cart items through patching/delta requirements. this allows us to
-      // maintain a singular handler for the "crud"-like activities some experiences want to support.
-      // 2. Note too that I am not setting a timeout on this Cart listener for changes but it'd be trivial to support
+      // note that Signals are updating the cart items through patching/delta requirements. this
+      // allows us to
+      // maintain a singular handler for the "crud"-like activities some experiences want to
+      // support.
+      // 2. Note too that I am not setting a timeout on this Cart listener for changes but it'd be
+      // trivial to support
       // the "abandoned cart" flow merchants typically want to deal with explicitly.
       Workflow.await(() -> !this.itemsChangesRequests.isEmpty());
       var items = this.processItemsChanges(state, this.itemsChangesRequests);
@@ -59,12 +81,60 @@ public class CartImpl implements Cart {
       // status changed
       var valid = validateCartItems(items);
       this.state =
-          new CartResponse(this.state.id(), this.state.userId(), this.state.isSealed(), valid);
+          new CartResponse(
+              this.state.id(),
+              this.state.userId(),
+              this.state.isLocked(),
+              valid,
+              this.state.checkout());
       // source of truth is our Workflow state (not the view models)
       syncCartView(this.state);
     }
+    // when checkout is STARTED we want to wait for checkout to be COMPLETED
+    // when checkout is SHOPPING we want to unlock the cart to resume ops
+    // wash rinse repeat
+    Workflow.await(
+        () ->
+            Objects.equals(this.state.checkout().status(), CheckoutStatus.SHOPPING)
+                || Objects.equals(this.state.checkout().status(), CheckoutStatus.COMPLETED));
+
+    if (Objects.equals(this.state.checkout().status(), CheckoutStatus.SHOPPING)) {
+      var can = Workflow.newContinueAsNewStub(CartImpl.class);
+      can.execute(
+          new InitializeCartRequest(this.state.id(), this.state.userId(), this.state.checkout()));
+    }
+    // allow workflow to complete
+    // here we could do some cleanup tasks, etc
   }
 
+  private boolean shouldLock(PutCheckoutRequest checkout) {
+    return checkout != null && !Objects.equals(checkout.status(), CheckoutStatus.SHOPPING);
+  }
+
+  // pure utility function
+  private Map<String, CartItem> fromProductQuantities(String cartId, ProductQuantity... products) {
+
+    var result = new LinkedHashMap<String, CartItem>();
+    // this algorithm is duplicated below...refactor cleanly
+    for (var product : Arrays.stream(products).filter(Objects::nonNull).toList()) {
+
+      var qty = product.quantity();
+      if (qty != 0) {
+        var c = result.get(product.productId());
+        if (c != null) {
+          qty = Math.max(qty + c.quantity(), 0);
+        }
+      }
+
+      if (qty == 0) {
+        // zero is meaningful instruction
+        result.remove(product.productId());
+      } else {
+        result.put(product.productId(), new CartItem(cartId, product.productId(), qty));
+      }
+    }
+    return result;
+  }
   // syncCartView flushes the current cart items state to an activity which should
   // denormalize, hydrate, and ultimately write/upsert to persistent storage.
   // note that in the Temporal world, we treat the Workflow, not a cache, as the system of record.
@@ -97,7 +167,37 @@ public class CartImpl implements Cart {
   // quantity of > 0 means to append the item with quantity of Q
   @Override
   public void applyItemsChanges(ApplyCartItemsChanges params) {
-    this.itemsChangesRequests.add(params);
+    if (params == null
+        || !Objects.equals(params.cartId(), this.state.id())
+        || params.productQuantities().isEmpty()) {
+      return;
+    }
+    if (!this.state.isLocked()) {
+      // we WANT to drop changes on the floor while this is locked
+      this.itemsChangesRequests.add(params);
+    }
+  }
+
+  @Override
+  public void validateCheckout(PutCheckoutRequest req) {
+    if (this.state.checkout() != null
+        && !Objects.equals(this.state.checkout().checkoutId(), req.checkoutId())) {
+      throw ApplicationFailure.newFailure(
+          String.format(
+              "checkout has already started with id %s", this.state.checkout().checkoutId()),
+          Errors.ERR_CHECKOUT_STARTED.name());
+    }
+  }
+
+  @Override
+  public void checkout(PutCheckoutRequest req) {
+    this.state =
+        new CartResponse(
+            this.state.id(),
+            this.state.userId(),
+            !Objects.equals(req.status(), CheckoutStatus.SHOPPING),
+            this.state.items(),
+            req);
   }
 
   @Override
@@ -105,40 +205,46 @@ public class CartImpl implements Cart {
     return this.state;
   }
 
-  // this pure function merges the quantity changes requested into the current products (if any) already in the cart
+
+  // this pure function merges the quantity changes requested into the current products (if any)
+  // already in the cart
   private Map<String, CartItem> processItemsChanges(
       CartResponse state, List<ApplyCartItemsChanges> requests) {
-    var result = new LinkedHashMap<String, CartItem>();
+    var result = new LinkedHashMap<>(state.items());
     Iterator<ApplyCartItemsChanges> it = requests.iterator();
     while (it.hasNext()) {
       ApplyCartItemsChanges request = it.next();
-      // just exclude zero quantity delta requests
-      for (ProductQuantity q :
-          request.productQuantities().stream().filter(q -> q.quantity() != 0).toList()) {
-        var item = state.items().get(q.productId());
-        var qtyDelta = q.quantity();
-        if (item != null) {
-          qtyDelta = Math.max(item.quantity() + q.quantity(), 0);
+      for (var product : request.productQuantities().stream().filter(Objects::nonNull).toList()) {
+
+        var qty = product.quantity();
+        if (qty != 0) {
+          var c = result.get(product.productId());
+          if (c != null) {
+            qty = Math.max(qty + c.quantity(), 0);
+          }
         }
 
-        // though we filtered out zero quantities, we could compute a zero because we accept negative quantity deltas
-        if (qtyDelta > 0) {
-          result.put(q.productId(), new CartItem(state.id(), q.productId(), qtyDelta));
+        if (qty == 0) {
+          // zero is meaningful instruction
+          result.remove(product.productId());
+        } else {
+          result.put(product.productId(), new CartItem(state.id(), product.productId(), qty));
         }
+        it.remove();
       }
-      // safely remove the item from the queue
-      it.remove();
     }
+
     return result;
   }
 
-  // this pure function collects valid items, delegating to validateProductQuantity for inclusion test
+  // this pure function collects valid items, delegating to validateProductQuantity for inclusion
+  // test
   private Map<String, CartItem> validateCartItems(Map<String, CartItem> items) {
     var valid = new LinkedHashMap<String, CartItem>();
     for (Map.Entry<String, CartItem> e : items.entrySet()) {
       var check =
           validateProduct(new ProductQuantity(e.getValue().productId(), e.getValue().quantity()));
-      if (check != null) {
+      if (check != null && check.quantity() > 0) {
         valid.put(
             e.getKey(),
             new CartItem(e.getValue().cartId(), e.getValue().productId(), check.quantity()));
@@ -158,7 +264,9 @@ public class CartImpl implements Cart {
     var inv =
         inventoryHandlers.getInventoryStatus(
             new ProductInventoryStatusRequest(productQuantity.productId()));
-    if (inv.quantityOrderable() < productQuantity.quantity()) {
+    if (inv.quantityOrderable() == 0) {
+      return null;
+    } else if (inv.quantityOrderable() < productQuantity.quantity()) {
       // what shall we do with an invalid/out-of-stock item?
       // 1. enqueue on a "outOfStockItems" list and update state?
       // 2. error the entire transaction?

@@ -1,12 +1,10 @@
 package io.temporal.ecommerce.domain.orchestrations;
 
 import io.temporal.ecommerce.messages.commands.ApplyCartItemsChanges;
+import io.temporal.ecommerce.messages.commands.PutCheckoutRequest;
 import io.temporal.ecommerce.messages.queries.CartResponse;
 import io.temporal.ecommerce.messages.workflows.InitializeCartRequest;
-import io.temporal.workflow.QueryMethod;
-import io.temporal.workflow.SignalMethod;
-import io.temporal.workflow.WorkflowInterface;
-import io.temporal.workflow.WorkflowMethod;
+import io.temporal.workflow.*;
 
 @WorkflowInterface
 public interface Cart {
@@ -15,6 +13,12 @@ public interface Cart {
 
   @SignalMethod
   void applyItemsChanges(ApplyCartItemsChanges params);
+
+  @UpdateValidatorMethod(updateName = "checkout")
+  void validateCheckout(PutCheckoutRequest req);
+
+  @UpdateMethod
+  void checkout(PutCheckoutRequest req);
 
   @QueryMethod
   CartResponse getState();
