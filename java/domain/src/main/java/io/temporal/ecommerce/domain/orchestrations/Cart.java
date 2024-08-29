@@ -14,10 +14,12 @@ public interface Cart {
   @SignalMethod
   void applyItemsChanges(ApplyCartItemsChanges params);
 
-  @UpdateValidatorMethod(updateName = "checkout")
-  void validateCheckout(PutCheckoutRequest req);
-
-  @UpdateMethod
+  //  @UpdateValidatorMethod(updateName = "checkout")
+  //  void validateCheckout(PutCheckoutRequest req);
+  //
+  //  @UpdateMethod
+  //  void checkout(PutCheckoutRequest req);
+  @SignalMethod
   void checkout(PutCheckoutRequest req);
 
   @QueryMethod

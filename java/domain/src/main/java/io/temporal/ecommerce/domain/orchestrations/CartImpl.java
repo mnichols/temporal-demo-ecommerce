@@ -3,6 +3,7 @@ package io.temporal.ecommerce.domain.orchestrations;
 import io.temporal.activity.ActivityOptions;
 import io.temporal.ecommerce.messages.commands.ApplyCartItemsChanges;
 import io.temporal.ecommerce.messages.commands.PutCheckoutRequest;
+import io.temporal.ecommerce.messages.commands.StartCheckoutRequest;
 import io.temporal.ecommerce.messages.commands.WriteDenormalizedCartItemRequest;
 import io.temporal.ecommerce.messages.queries.CartResponse;
 import io.temporal.ecommerce.messages.queries.ProductInventoryStatusRequest;
@@ -21,6 +22,7 @@ import org.slf4j.Logger;
 
 public class CartImpl implements Cart {
   private final ViewActivities viewHandlers;
+  private final SalesActivities salesHandlers;
   private CartResponse state;
   private final List<ApplyCartItemsChanges> itemsChangesRequests = new ArrayList<>();
   private final InventoryActivities inventoryHandlers;
@@ -39,6 +41,10 @@ public class CartImpl implements Cart {
     this.viewHandlers =
         Workflow.newActivityStub(
             ViewActivities.class,
+            ActivityOptions.newBuilder().setStartToCloseTimeout(Duration.ofSeconds(10)).build());
+    this.salesHandlers =
+        Workflow.newActivityStub(
+            SalesActivities.class,
             ActivityOptions.newBuilder().setStartToCloseTimeout(Duration.ofSeconds(10)).build());
   }
 
@@ -75,7 +81,10 @@ public class CartImpl implements Cart {
       // 2. Note too that I am not setting a timeout on this Cart listener for changes but it'd be
       // trivial to support
       // the "abandoned cart" flow merchants typically want to deal with explicitly.
-      Workflow.await(() -> !this.itemsChangesRequests.isEmpty());
+      Workflow.await(() -> this.state.isLocked() || !this.itemsChangesRequests.isEmpty());
+      if (this.state.isLocked()) {
+        continue;
+      }
       var items = this.processItemsChanges(state, this.itemsChangesRequests);
       // note we are not trying to cover the "removed from cart" path where inventory or shipping
       // status changed
@@ -90,6 +99,15 @@ public class CartImpl implements Cart {
       // source of truth is our Workflow state (not the view models)
       syncCartView(this.state);
     }
+    logger.info("UNLOCKED {}", this.state.isLocked());
+
+    var checkoutRequest =
+        new StartCheckoutRequest(
+            this.state.checkout().checkoutId(),
+            this.state.id(),
+            this.state.items().values().toArray(new CartItem[0]));
+    logger.info("Starting checkout {}", checkoutRequest);
+    this.salesHandlers.startCheckout(checkoutRequest);
     // when checkout is STARTED we want to wait for checkout to be COMPLETED
     // when checkout is SHOPPING we want to unlock the cart to resume ops
     // wash rinse repeat
@@ -105,6 +123,47 @@ public class CartImpl implements Cart {
     }
     // allow workflow to complete
     // here we could do some cleanup tasks, etc
+  }
+
+  // applyItemsChanges allows us to add, remove or clear a product from our collection
+  // quantity of 0 means to clear the item
+  // quantity of < 0 means to reduce the current quantity by Q
+  // quantity of > 0 means to append the item with quantity of Q
+  @Override
+  public void applyItemsChanges(ApplyCartItemsChanges params) {
+    if (params == null
+        || !Objects.equals(params.cartId(), this.state.id())
+        || params.productQuantities().isEmpty()) {
+      return;
+    }
+    if (!this.state.isLocked()) {
+      // we WANT to drop changes on the floor while this is locked
+      this.itemsChangesRequests.add(params);
+    }
+  }
+
+  // @Override
+  public void validateCheckout(PutCheckoutRequest req) {
+    if (this.state.checkout() != null
+        && !Objects.equals(this.state.checkout().checkoutId(), req.checkoutId())) {
+      throw ApplicationFailure.newFailure(
+          String.format(
+              "checkout has already started with id %s", this.state.checkout().checkoutId()),
+          Errors.ERR_CHECKOUT_STARTED.name());
+    }
+  }
+
+  @Override
+  public void checkout(PutCheckoutRequest req) {
+    logger.info("setting checkout on our cart {}", req);
+    this.state =
+        new CartResponse(
+            this.state.id(), this.state.userId(), shouldLock(req), this.state.items(), req);
+  }
+
+  @Override
+  public CartResponse getState() {
+    return this.state;
   }
 
   private boolean shouldLock(PutCheckoutRequest checkout) {
@@ -160,51 +219,6 @@ public class CartImpl implements Cart {
       // what should we do when we cant sync our view state from domain??
     }
   }
-
-  // applyItemsChanges allows us to add, remove or clear a product from our collection
-  // quantity of 0 means to clear the item
-  // quantity of < 0 means to reduce the current quantity by Q
-  // quantity of > 0 means to append the item with quantity of Q
-  @Override
-  public void applyItemsChanges(ApplyCartItemsChanges params) {
-    if (params == null
-        || !Objects.equals(params.cartId(), this.state.id())
-        || params.productQuantities().isEmpty()) {
-      return;
-    }
-    if (!this.state.isLocked()) {
-      // we WANT to drop changes on the floor while this is locked
-      this.itemsChangesRequests.add(params);
-    }
-  }
-
-  @Override
-  public void validateCheckout(PutCheckoutRequest req) {
-    if (this.state.checkout() != null
-        && !Objects.equals(this.state.checkout().checkoutId(), req.checkoutId())) {
-      throw ApplicationFailure.newFailure(
-          String.format(
-              "checkout has already started with id %s", this.state.checkout().checkoutId()),
-          Errors.ERR_CHECKOUT_STARTED.name());
-    }
-  }
-
-  @Override
-  public void checkout(PutCheckoutRequest req) {
-    this.state =
-        new CartResponse(
-            this.state.id(),
-            this.state.userId(),
-            !Objects.equals(req.status(), CheckoutStatus.SHOPPING),
-            this.state.items(),
-            req);
-  }
-
-  @Override
-  public CartResponse getState() {
-    return this.state;
-  }
-
 
   // this pure function merges the quantity changes requested into the current products (if any)
   // already in the cart
