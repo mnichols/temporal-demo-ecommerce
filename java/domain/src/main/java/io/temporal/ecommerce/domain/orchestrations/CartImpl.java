@@ -142,7 +142,7 @@ public class CartImpl implements Cart {
     }
   }
 
-  // @Override
+  @Override
   public void validateCheckout(PutCheckoutRequest req) {
     if (this.state.checkout() != null
         && !Objects.equals(this.state.checkout().checkoutId(), req.checkoutId())) {
